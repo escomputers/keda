@@ -94,6 +94,7 @@ func TestDynatraceGetMetricByQuery(t *testing.T) {
 		pollResponseAfter     int
 		pollIntermediateState string
 		pollTerminalState     string
+		pollNotificationType  string
 		metricValue           float64
 		isError               bool
 	}{
@@ -172,6 +173,14 @@ func TestDynatraceGetMetricByQuery(t *testing.T) {
 			pollTerminalState:   "RESULT_GONE",
 			isError:             true,
 		},
+		{
+			name:                 "poll returns missing bucket permissions notification",
+			executeResponseFail:  false,
+			pollTerminalState:    "SUCCEEDED",
+			pollNotificationType: "MISSING_BUCKET_PERMISSIONS",
+			metricValue:          0,
+			isError:              true,
+		},
 	}
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -215,16 +224,31 @@ func TestDynatraceGetMetricByQuery(t *testing.T) {
 						if pollingCount > tt.pollResponseAfter {
 							w.Header().Set("Content-Type", "application/json")
 							w.WriteHeader(http.StatusOK)
-							bytes, err := json.Marshal(dynatraceQueryResponse{
+							queryResponse := dynatraceQueryResponse{
 								State: pollTerminalState,
-								Result: struct {
-									Records []struct {
-										R float64 `json:"r"`
-									} `json:"records"`
-								}{Records: []struct {
-									R float64 `json:"r"`
-								}{{R: tt.metricValue}}},
-							})
+							}
+							queryResponse.Result.Records = []struct {
+								R float64 `json:"r"`
+							}{{R: tt.metricValue}}
+							var response any = queryResponse
+							if tt.pollNotificationType != "" {
+								response = map[string]any{
+									"state": pollTerminalState,
+									"result": map[string]any{
+										"records": []map[string]any{{"r": tt.metricValue}},
+										"metadata": map[string]any{
+											"grail": map[string]any{
+												"notifications": []map[string]any{{
+													"message":          "No bucket permissions for table metrics.",
+													"notificationType": tt.pollNotificationType,
+													"severity":         "WARNING",
+												}},
+											},
+										},
+									},
+								}
+							}
+							bytes, err := json.Marshal(response)
 							assert.NoError(t, err)
 							_, err = w.Write(bytes)
 							assert.NoError(t, err)
